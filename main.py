@@ -8,3 +8,7 @@ groq_base_url =""
 api_key = os.getenv(GROQ_API_KEY)
 load_dotenv()
 openai = OpenAI(base_url=groq_base_url, api_key=api_key)
+
+def seek_assistant(message, history):
+    history = [{"role": h["role"], "content":h["content"]}, for h in history]
+    pass
