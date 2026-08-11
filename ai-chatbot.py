@@ -6,6 +6,11 @@ load_dotenv()
 import gradio as gr
 
 api_key = os.getenv("GROQ_API_KEY")
+if api_key:
+    print("key looks good and youre ready to go")
+else:
+    print("configure your api key")
+    
 groq_base_url = "https://api.groq.com/openai/v1"
 model = "openai/gpt-oss-120b"
 
