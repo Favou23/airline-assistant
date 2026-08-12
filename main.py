@@ -24,14 +24,26 @@ def get_ticket_price(destination):
 print(get_ticket_price("warri"))
 
 def chat(message, history):
+    price_function ={}
     system_message = "youre an helpful airline assistant"
-    tools = [{"type""}]
+    tools = [{"type":"function", "function":price_function}]
     history = [{"role": h["role"], "content": h["content"]} for h in history]
     messages = [{"role":"system", "content": system_message} + history + {"role":"user", "content": message}]
     response = openai.chat.completions.create(model = model, messages= messages, tools=tools)
     
-
+    if response.choices[0].finish_reason == "tool_call":
+        message = response.choices[0].message
+        result = tool_call(message)
+        messages.append(message)
+        messages.append(result)
+        response  = openai.chat.completions.create(model = model, messages=messages)
         
+    return response.choices[0].message.content
+        
+    
+
+def tool_call():
+    pass
         
         
         
