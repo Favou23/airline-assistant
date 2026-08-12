@@ -23,3 +23,5 @@ def get_ticket_price(destination):
 print(get_ticket_price("warri"))
 
         
+        
+        
