@@ -73,7 +73,9 @@ def chat(message, history):
     
     return response.choices[0].message.content
         
-def handle_tool_call()
+def handle_tool_call():
+    pass
+
 
 
 
