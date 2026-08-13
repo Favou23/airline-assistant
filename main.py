@@ -2,11 +2,10 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 import gradio as gr
-
-GROQ_BASE_URL = ""
-groq_base_url =""
-api_key = os.getenv(GROQ_API_KEY)
+import json
+groq_base_url ="https://api.groq.com/openai/v1"
 load_dotenv()
+api_key = os.getenv("GROQ_API_KEY")
 openai = OpenAI(base_url=groq_base_url, api_key=api_key)
 model = "openai/gpt-oss-120b"
 
@@ -49,37 +48,62 @@ model = "openai/gpt-oss-120b"
 
 ticket_pice = {"lagos": "$500"}
 
-def get_ticket(destination):
-    price = ticket_pice.get(destination)
+def get_ticket_price(destination):
+    price = ticket_pice.get(destination.lower(), "unknown price")
     return f"your ticket to {destination} is {price} "
 
 
 
-# but if i want to use in an llm context, lets say that i want my llm to call a  tool which will then query the databse 
+system_message = """
+You are a helpful assistant for an Airline called FlightAI.
+Give short, courteous answers, no more than 1 sentence.
+Always be accurate. If you don't know the answer, say so.
+"""
+
+price_function = {
+    "name": "get_ticket_price",
+    "description": "Get the price of a return ticket to the destination city.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "destination_city": {
+                "type": "string",
+                "description": "The city that the customer wants to travel to",
+            },
+        },
+        "required": ["destination_city"],
+        "additionalProperties": False
+    }
+}
+tools =[{"type":"function", "function": price_function}]
+
+def handle_tool_calls(message):
+    responses = []
+    for tool_call in message.tool_calls:
+        if tool_call.function.name == "get_ticket_price":
+            arguments = json.loads(tool_call.function.arguments)
+            city = arguments.get('destination_city')
+            price_details = get_ticket_price(city)
+            responses.append({
+                "role": "tool",
+                "content": price_details,
+                "tool_call_id": tool_call.id
+            })
+    return responses
 
 
 def chat(message, history):
-    price_function = {}
-    tools = [{"type":"function", "function": price_function}]
-    system_message =[]
-    history = [{"role": h["role"], "content":h["content"]} for h in history]
-    messages = [{"role": "system", "content":system_message}]+ history + [{"role":"user", "content": message}]
-    response = openai.chat.completions.create(model = model, messages=messages, tools= tools)
-    
-    if response.choices[0].finish_reason == "tool_calls":
+    history = [{"role":h["role"], "content":h["content"]} for h in history]
+    messages = [{"role": "system", "content": system_message}] + history + [{"role": "user", "content": message}]
+    response = openai.chat.completions.create(model=model, messages=messages, tools=tools)
+
+    while response.choices[0].finish_reason=="tool_calls":
         message = response.choices[0].message
-        result = handle_tool_call(message)
-        return openai.chat .completions.create(model=model, messages=messages)
+        responses = handle_tool_calls(message)
+        messages.append(message)
+        messages.extend(responses)
+        response = openai.chat.completions.create(model=model, messages=messages, tools=tools)
     
     return response.choices[0].message.content
-        
-def handle_tool_call():
-    pass
 
-
-
-
-        
-        
-        
-        
+gr.ChatInterface(fn = chat).launch(auth=("favour", "favour123"), inbrowser=True)
