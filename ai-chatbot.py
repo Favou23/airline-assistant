@@ -48,4 +48,4 @@ output = gr.Markdown()
 #     flagging_mode="never",
 # )
 
-view = gr.ChatInterface(fn = chat).launch(inbrowser=True, auth=True)
+view = gr.ChatInterface(fn = chat).launch(inbrowser=True, auth=True,)
