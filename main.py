@@ -78,13 +78,10 @@
 import os
 import json
 import sqlite3
-import base64
-
-from io import BytesIO
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from PIL import Image
+import openai
 import gradio as gr
 
 
@@ -99,12 +96,61 @@ groq_api_key = os.getenv("GROQ_API_KEY")
 
 
 # Groq client
-groq_base_url = "https://api.groq.com/openai/v1"
+# Use the provider root URL and let the client form the expected /v1 paths.
+# If this still fails, try "https://api.groq.com/v1" per provider docs.
+groq_base_url = os.environ.get("GROQ_BASE_URL", "https://api.groq.com")
 
-groq = OpenAI(
-    base_url=groq_base_url,
-    api_key=groq_api_key
-)
+# Candidate base URLs to try if the provider's client constructs endpoints
+# that don't match the server routing. You can override by setting
+# the `GROQ_BASE_URL` environment variable to the correct root.
+GROQ_BASE_CANDIDATES = [
+    groq_base_url,
+    "https://api.groq.com/v1",
+    "https://api.groq.com/openai/v1",
+]
+
+def create_groq_client(base_url):
+    print(f"Creating Groq client with base_url={base_url}", flush=True)
+    return OpenAI(base_url=base_url, api_key=groq_api_key)
+
+# Start with the configured/base candidate
+groq = create_groq_client(groq_base_url)
+
+def _try_with_alternatives_call(callable_name, *args, **kwargs):
+    """Call a method on the `groq` client; on NotFoundError try alternative bases.
+
+    callable_name: attribute path like "chat.completions.create" to call using getattr chaining.
+    """
+    global groq
+
+    def _call_with_client(client):
+        # Resolve nested attribute path
+        obj = client
+        for part in callable_name.split('.'):
+            obj = getattr(obj, part)
+        return obj(*args, **kwargs)
+
+    try:
+        return _call_with_client(groq)
+    except openai.NotFoundError as e:
+        print(f"Request returned 404 with base {getattr(groq, 'base_url', 'unknown')}: {e}", flush=True)
+        # Try alternatives
+        for candidate in GROQ_BASE_CANDIDATES:
+            # If same as current client's base, skip
+            try:
+                current_base = getattr(groq, 'base_url', None)
+            except Exception:
+                current_base = None
+            if current_base and str(candidate).rstrip('/') == str(current_base).rstrip('/'):
+                continue
+            try:
+                print(f"Retrying with base: {candidate}", flush=True)
+                groq = create_groq_client(candidate)
+                return _call_with_client(groq)
+            except openai.NotFoundError:
+                continue
+        # If we reach here, re-raise the original error
+        raise
 
 
 
@@ -113,8 +159,6 @@ groq = OpenAI(
 # ============================================================
 
 CHAT_MODEL = "openai/gpt-oss-120b"
-
-IMAGE_MODEL ="openai/gpt-oss-120b"
 
 AUDIO_MODEL = "openai/gpt-oss-120b"
 
@@ -311,40 +355,7 @@ def handle_tool_calls(message):
 # 9. IMAGE GENERATION TOOL
 # ============================================================
 
-def artist(city):
-
-    print(
-        f"IMAGE TOOL CALLED: Generating image for {city}",
-        flush=True
-    )
-
-    image_response = groq.images.generate(
-
-        model=IMAGE_MODEL,
-
-        prompt=(
-            f"An image representing a vacation in {city}, "
-            f"showing tourist spots and everything unique about {city}, "
-            "in a vibrant pop-art style"
-        ),
-
-        size="1024x1024",
-
-        n=1
-    )
-
-    # Extract the base64 image returned by OpenAI.
-    image_base64 = image_response.data[0].b64_json
-
-    # Convert base64 → bytes.
-    image_data = base64.b64decode(image_base64)
-
-    # Convert bytes → PIL Image.
-    image = Image.open(
-        BytesIO(image_data)
-    )
-
-    return image
+# Image generation removed to keep the app chat-only and simpler to deploy.
 
 
 # ============================================================
@@ -375,41 +386,8 @@ def artist(city):
 # ============================================================
 
 def handle_tool_calls_and_return_cities(message):
-
-    responses = []
-
-    cities = []
-
-    for tool_call in message.tool_calls:
-
-        if tool_call.function.name == "get_ticket_price":
-
-            # Convert JSON arguments → Python dictionary
-            arguments = json.loads(
-                tool_call.function.arguments
-            )
-
-            # Extract city
-            city = arguments.get("destination_city")
-
-            # Keep track of the city.
-            # We will use this later to generate the image.
-            cities.append(city)
-
-            # Actually execute the database tool.
-            price_details = get_ticket_price(city)
-
-            # Package the result for the LLM.
-            responses.append({
-
-                "role": "tool",
-
-                "content": price_details,
-
-                "tool_call_id": tool_call.id
-            })
-
-    return responses, cities
+    # Deprecated: image generation removed. Use `handle_tool_calls` for tool execution.
+    return handle_tool_calls(message), []
 
 
 # ============================================================
@@ -447,13 +425,11 @@ def chat(history):
     # First LLM call
     # --------------------------------------------------------
 
-    response = groq.chat.completions.create(
-
+    response = _try_with_alternatives_call(
+        "chat.completions.create",
         model=CHAT_MODEL,
-
         messages=messages,
-
-        tools=tools
+        tools=tools,
     )
 
 
@@ -506,13 +482,11 @@ def chat(history):
         # the tool result.
         # ----------------------------------------------------
 
-        response = groq.chat.completions.create(
-
+        response = _try_with_alternatives_call(
+            "chat.completions.create",
             model=CHAT_MODEL,
-
             messages=messages,
-
-            tools=tools
+            tools=tools,
         )
 
 
@@ -540,21 +514,10 @@ def chat(history):
 
 
     # ========================================================
-    # 15. GENERATE IMAGE IF A CITY WAS USED
+    # 15. RETURN TO GRADIO (chat-only)
     # ========================================================
 
-    image = None
-
-    if cities:
-
-        image = artist(cities[0])
-
-
-    # ========================================================
-    # 16. RETURN EVERYTHING TO GRADIO
-    # ========================================================
-
-    return history,  image
+    return history
 
 
 # ============================================================
@@ -586,10 +549,6 @@ with gr.Blocks() as ui:
             height=500
         )
 
-        image_output = gr.Image(
-            height=500,
-            interactive=False
-        )
 
 
    
@@ -626,8 +585,6 @@ with gr.Blocks() as ui:
 
         outputs=[
             chatbot,
-        
-            image_output
         ]
     )
 
@@ -636,7 +593,11 @@ with gr.Blocks() as ui:
 # 19. LAUNCH
 # ============================================================
 
+port = int(os.environ.get("PORT", 7860))
+
 ui.launch(
-    inbrowser=True,
-    share=True
+    server_name="0.0.0.0",
+    server_port=port,
+    inbrowser=False,
+    share=False
 )
