@@ -2,5 +2,3 @@ gradio
 openai
 python-dotenv
 
-# Optional (uncomment if used):
-# requests
